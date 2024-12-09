@@ -167,27 +167,30 @@ class AttentionModule(nn.Module):
         Matt = Matt.unsqueeze(1).repeat(1, X.size(0))
 
         return Matt
-def calculate_adjacency_matrix_with_andm(X, eta=0.5, dk=64, attention_module=None, similarity_metric="cosine"):
+
+def calculate_adjacency_matrix_with_andm(X, eta=0.5, dk=64, attention_module=None, similarity_metric="scm", zeta=0.3):
     """
-    Computes an adjacency matrix combining SCM scores or cosine similarity with attention module output.
+    Computes an adjacency matrix combining SCM scores, cosine similarity, and an additional hybrid metric.
     Args:
         X (torch.Tensor): Input feature matrix of shape (N, D).
-        eta (float): Weighting parameter for similarity scores and attention scores.
+        eta (float): Weighting parameter for SCM or cosine similarity scores.
         dk (int): Dimension of the key and query vectors in the attention module.
         attention_module (AttentionModule, optional): Predefined attention module.
         similarity_metric (str): Choice of similarity metric ("scm" or "cosine").
+        zeta (float): Weighting parameter for the hybrid additional metric.
     Returns:
         torch.Tensor: Final adjacency matrix of shape (N, N).
     """
     n, d = X.size()
 
     with torch.no_grad():
+        # Similarity calculation based on selected metric
         if similarity_metric == "cosine":
-            # Compute cosine similarity using the provided function
+            # Compute cosine similarity
             norm_X = F.normalize(X, p=2, dim=1)
             similarity_scores = torch.matmul(norm_X, norm_X.t())
         elif similarity_metric == "scm":
-            # Compute SCM scores using the provided SCM function
+            # Compute SCM scores
             similarity_scores = torch.zeros((n, n), device=X.device)
             for i in range(n):
                 for j in range(n):
@@ -197,12 +200,17 @@ def calculate_adjacency_matrix_with_andm(X, eta=0.5, dk=64, attention_module=Non
 
         similarity_scores = torch.clamp(similarity_scores, min=-1.0, max=1.0)
 
+        # Additional hybrid metric: Euclidean distance converted to similarity
+        dist_matrix = torch.cdist(X, X, p=2)  # Compute pairwise Euclidean distances
+        hybrid_scores = torch.exp(-dist_matrix)  # Convert to similarity using Gaussian kernel
+
     if attention_module is not None:
         Matt = attention_module(X)
     else:
         Matt = torch.zeros(n, n).to(X.device)
 
-    A = eta * similarity_scores + (1 - eta) * Matt
+    # Combine similarity scores, hybrid scores, and attention scores
+    A = eta * similarity_scores + (1 - eta - zeta) * Matt + zeta * hybrid_scores
 
     gamma = torch.rand(n, 1, device=X.device)
     beta = torch.rand(n, 1, device=X.device)
@@ -210,6 +218,7 @@ def calculate_adjacency_matrix_with_andm(X, eta=0.5, dk=64, attention_module=Non
     AN = andm(A, gamma, beta)
 
     return AN
+
 
 
 def extract_descriptors_and_build_graph_with_andm(img_pth, max_num_nodes=500, feature_dim=256, eta=0.5, dk=64, attention_module=None):
