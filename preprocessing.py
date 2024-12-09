@@ -31,7 +31,7 @@ superpoint_model.to(device)
 detector = dlib.get_frontal_face_detector()
 predictor = dlib.shape_predictor("shape_predictor_68_face_landmarks.dat")  # Ensure this file is in the working directory or provide the full path
 
-def extract_descriptors_and_build_graph2(img_pth, max_num_nodes=500, feature_dim=256, k=5):
+def extract_descriptors_and_build_graph2(img_pth, max_num_nodes=500, feature_dim=256, k=8):
     img = cv2.imread(img_pth)
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
 
@@ -122,6 +122,19 @@ def scm(des1, des2):
     similarity = stable_sigmoid(x)
     return similarity
 
+def cosine_similarity(des1, des2):
+    """
+    Compute the cosine similarity between two tensors.
+    
+    Args:
+        des1 (torch.Tensor): Tensor of shape (N, D) where N is the number of samples and D is the dimensionality.
+        des2 (torch.Tensor): Tensor of shape (N, D) where N is the number of samples and D is the dimensionality.
+    
+    Returns:
+        torch.Tensor: Cosine similarity for each pair in the batch, shape (N,).
+    """
+    return F.cosine_similarity(des1, des2, dim=1)
+
 def andm(A, gamma, beta):
     n = A.size(0)
     mean_A = torch.mean(A, dim=1, keepdim=True)
@@ -154,27 +167,42 @@ class AttentionModule(nn.Module):
         Matt = Matt.unsqueeze(1).repeat(1, X.size(0))
 
         return Matt
-
-def calculate_adjacency_matrix_with_andm(X, eta=0.5, dk=64, attention_module=None):
+def calculate_adjacency_matrix_with_andm(X, eta=0.5, dk=64, attention_module=None, similarity_metric="cosine"):
+    """
+    Computes an adjacency matrix combining SCM scores or cosine similarity with attention module output.
+    Args:
+        X (torch.Tensor): Input feature matrix of shape (N, D).
+        eta (float): Weighting parameter for similarity scores and attention scores.
+        dk (int): Dimension of the key and query vectors in the attention module.
+        attention_module (AttentionModule, optional): Predefined attention module.
+        similarity_metric (str): Choice of similarity metric ("scm" or "cosine").
+    Returns:
+        torch.Tensor: Final adjacency matrix of shape (N, N).
+    """
     n, d = X.size()
 
     with torch.no_grad():
-        norm_X = F.normalize(X, p=2, dim=1)
-        Msim = torch.matmul(norm_X, norm_X.t())
-        Msim = torch.clamp(Msim, min=-1.0, max=1.0)
+        if similarity_metric == "cosine":
+            # Compute cosine similarity using the provided function
+            norm_X = F.normalize(X, p=2, dim=1)
+            similarity_scores = torch.matmul(norm_X, norm_X.t())
+        elif similarity_metric == "scm":
+            # Compute SCM scores using the provided SCM function
+            similarity_scores = torch.zeros((n, n), device=X.device)
+            for i in range(n):
+                for j in range(n):
+                    similarity_scores[i, j] = scm(X[i].unsqueeze(0), X[j].unsqueeze(0))
+        else:
+            raise ValueError("Invalid similarity_metric. Choose 'scm' or 'cosine'.")
 
-        dotproduct = torch.sum(X.unsqueeze(1) * X.unsqueeze(0), dim=2) / (
-            torch.norm(X, dim=1).unsqueeze(1) * torch.norm(X, dim=1).unsqueeze(0) + 1e-8
-        )
-        x = dotproduct / (torch.norm(X, dim=1).unsqueeze(1) ** 0.5 + 1e-8)
-        scm_scores = stable_sigmoid(x)
+        similarity_scores = torch.clamp(similarity_scores, min=-1.0, max=1.0)
 
     if attention_module is not None:
         Matt = attention_module(X)
     else:
         Matt = torch.zeros(n, n).to(X.device)
 
-    A = eta * scm_scores + (1 - eta) * Matt
+    A = eta * similarity_scores + (1 - eta) * Matt
 
     gamma = torch.rand(n, 1, device=X.device)
     beta = torch.rand(n, 1, device=X.device)
@@ -182,6 +210,7 @@ def calculate_adjacency_matrix_with_andm(X, eta=0.5, dk=64, attention_module=Non
     AN = andm(A, gamma, beta)
 
     return AN
+
 
 def extract_descriptors_and_build_graph_with_andm(img_pth, max_num_nodes=500, feature_dim=256, eta=0.5, dk=64, attention_module=None):
     x, edge_index, y, edge_attr = extract_descriptors_and_build_graph2(
