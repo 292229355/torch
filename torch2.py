@@ -101,9 +101,13 @@ def extract_face_region(img_pth, processor, superpoint_model, device, max_num_no
 
     # 選擇若干臉部區域（可依需求微調）
     regions = {
+        "left_eyebrow": np.arange(22, 27),
+        "right_eyebrow": np.arange(17, 22),
         "left_eye": np.arange(42, 48),
         "right_eye": np.arange(36, 42),
         "nose": np.arange(27, 36),
+        "upper_mouth": np.arange(48, 55),
+        "lower_mouth": np.arange(55, 68),
         "face_contour": np.arange(0, 68)
     }
 
