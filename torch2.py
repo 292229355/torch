@@ -66,6 +66,7 @@ def extract_superpoint_features(img_pil, processor, superpoint_model, device, ma
 
     image_mask = outputs.mask[0]
     image_indices = torch.nonzero(image_mask).squeeze()
+
     if image_indices.numel() == 0:
         return None, None
 
@@ -75,8 +76,13 @@ def extract_superpoint_features(img_pil, processor, superpoint_model, device, ma
     keypoint_coords = keypoints.cpu().numpy()
     descriptors = descriptors.cpu().numpy()
 
+    # Ensure descriptors is always 2D
     if descriptors.ndim == 1:
         descriptors = descriptors.reshape(1, -1)
+
+    # Ensure keypoint_coords is always 2D
+    if keypoint_coords.ndim == 1:
+        keypoint_coords = keypoint_coords[np.newaxis, :]
 
     scaler = StandardScaler()
     descriptors = scaler.fit_transform(descriptors)
